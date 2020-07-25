@@ -1,7 +1,9 @@
+import sqlite3
+
 import pandas as pd
 
 
-class SpeciesParams:
+class ParamGenerator:
     _default_params = {
         "aging": "1/(1 + (x/0.50)^2.50)",
         "finerootFoliageRatio": 0.75,
@@ -41,7 +43,7 @@ class SpeciesParams:
         "psiMin": ("psiMin", "psiMin"),
         "lightResponseClass": (
             "lightResponseClass",
-            "Shade tolerance",
+            "shade_tolerance",
         ),  # double check with WH
         "finerootFoliageRatio": None,
         "maturityYears": ("maturity", "maturity"),
@@ -84,14 +86,21 @@ class SpeciesParams:
         "serotinyFecundity": None,
     }
 
-    _EXCEL_PARAM_FNAME = "data/params/iland_america.xlsx"
+    _EXCEL_PARAM_FNAME = "~/mnt/data/iland_america.xlsx"
     _sheets = {}  # for caching sheets w multiple params.
 
     def __init__(self, short_name):
         self._short_name = short_name
 
     def _get_param(self, param_key):
-        sheet_name, col_name = self._schema[param_key]
+        try:
+            sheet_name, col_name = self._schema[param_key]
+        except TypeError:
+            # Param takes value None, get from defaults
+            if self._schema[param_key] is None:
+                return self._default_params.get(param_key, -999)
+            else:
+                raise
         try:
             sh = self._sheets[sheet_name]
         except KeyError:
@@ -99,12 +108,7 @@ class SpeciesParams:
             sh = pd.read_excel(self._EXCEL_PARAM_FNAME, sheet_name=sheet_name)
             self._sheets[sheet_name] = sh
 
-        # if col_name is None, then go to _default_params dict
-        if col_name:
-            val = sh.loc[sh.shortName == self._short_name].iloc[0][col_name]
-        else:
-            val = self._default_params.get(k, -999)
-        return val
+        return sh.loc[sh.shortName == self._short_name].iloc[0][col_name]
 
     def _species_overrides(self):
         """
@@ -112,22 +116,36 @@ class SpeciesParams:
         Like isConiferous, isEvergreen, active, displayColor, LIPFile
         estSprouting: 0/1
         """
-        return None
+        return {
+            "shortName": self._short_name,
+            "active": 1,
+            "isEvergreen": 0,
+            "isConiferous": 0,
+        }
 
-    def get_species_params(self):
-        return None
-
-        # append browsing
-        # append
+    def get_params(self):
         # TODO: check for -999 fill values.
-
-
-def species_params(short_name):
-    pass
+        params = {k: self._get_param(k) for k in self._schema.keys()}
+        overrides = self._species_overrides()
+        params.update(overrides)
+        return params
 
 
 def main():
-    pass
+    out_sql_fname = "/tmp/species_params.sql"
+
+    params = []
+
+    brf_short_names = ["qumo", "quru", "bepa", "bele", "acpe", "acru"]
+    for brf_short_name in brf_short_names:
+        param_generator = ParamGenerator(brf_short_name)
+        params.append(param_generator.get_params())
+
+    species = pd.DataFrame(params)
+    species.to_csv("/tmp/test.csv")
+
+    con = sqlite3.connect(out_sql_fname)
+    species.to_sql("species", con, if_exists="replace")
 
 
 if __name__ == "__main__":

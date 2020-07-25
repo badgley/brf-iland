@@ -1,14 +1,22 @@
 import pandas as pd
 
-# {'sqlite_name': {'sheet_name': 'columname'}}
 
-# http://iland.boku.ac.at/species+parameter
-class ParameterStore:
+class SpeciesParams:
+    _default_params = {
+        "aging": "1/(1 + (x/0.50)^2.50)",
+        "finerootFoliageRatio": 0.75,
+        "sapReferenceRatio": 0.8,
+        "browsingprobability": 0.2,
+        "estSprouting": 0,
+        "sapSproutGrowth": 0,
+    }
+
+    # see http://iland.boku.ac.at/species+parameter for lots and lots of details
     _schema = {
         "turnoverLeaf": ("leaf turnover", "turnover"),
         "turnoverRoot": ("root turnover", "turnover"),
-        # "HDlow": ("HDlow", "derived"),  # TK need talk to winslow
-        # "HDhigh": ("HDhi", "derived"),  # not clear how to do...
+        "HDlow": ("HDlow", "static_formula"),
+        "HDhigh": ("HDhi", "static_formula"),
         "woodDensity": ("woodDensity", "density"),
         "formFactor": ("formFactor", "formFactor"),
         "bmWoody_a": ("bmWoody", "a"),
@@ -23,11 +31,8 @@ class ParameterStore:
         "probStress": ("mortality", "probStress"),
         "maximumAge": ("maximumAge", "age"),
         "maximumHeight": ("maximumHeight", "maximumHeight"),
-        # "aging": ("TK", "TK"),
-        "respVpdExponent": (
-            "respVpdExponent",
-            "Exponent",
-        ),  # Ask WH -- his potr number super different
+        "aging": None,
+        "respVpdExponent": ("respVpdExponent", "Exponent",),
         "respTempMin": ("respTemp", "min"),
         "respTempMax": ("respTemp", "max"),
         "respNitrogenClass": ("respNitrogenClass", "Nclass"),
@@ -37,8 +42,8 @@ class ParameterStore:
         "lightResponseClass": (
             "lightResponseClass",
             "Shade tolerance",
-        ),  # double check with winslow
-        # "finerootFoliageRatio": (TK, TK), #@WH
+        ),  # double check with WH
+        "finerootFoliageRatio": None,
         "maturityYears": ("maturity", "maturity"),
         "seedYearInterval": ("seedyears", "average seed year interval"),
         "nonSeedYearFraction": ("seedyears", "non-seedyears"),
@@ -54,53 +59,76 @@ class ParameterStore:
         "estBudBirstGDD": ("establishment_iLand", "BudBurstGDD"),
         "estFrostFreeDays": ("establishment_iLand", "FrostFreeDays"),
         "estFrostTolerance": ("establishment_iLand", "FrostTolerance"),
-        # "sapHeightGrowthPotential": (TK, TK), #@WH
+        "sapHeightGrowthPotential": (
+            "sapling_growth",
+            "static_formula",
+        ),  # TODO: double check formula. WH version has \n in PIMA formula
         "sapMaxStressYears": ("sapMaxStressYear", "sapMaxStressYear"),
         "sapStressThreshold": ("sapStressThreshold", "sapStressThreshold"),
-        # "sapHDSapling": (TK, TK), # @WH
-        # "sapReinekesR": (TK, TK), # @WH
-        # "sapReferenceRatio": (TK, TK), # @WH
+        "sapHDSapling": ("SDI", "hd FIA"),  # @WH
+        "sapReinekesR": ("SDI", "Reineke new"),
+        "sapReferenceRatio": None,  # TODO: WH going to consider refinements
         "cnFoliage": ("CN-ratios", "cnFoliage"),
         "cnFineroot": ("CN-ratios", "cnFineroot"),
         "cnWood": ("CN-ratios", "cnWood"),
         "snagKSW": ("decomp", "ksw"),
         "snagHalfLife": ("snags", "halflife"),
         "snagKYL": ("decomp", "kyl"),
-        "snagKYR": (
-            "decomp",
-            "kyr",
-        ),  # double check WH that all are from `decomp` table
+        "snagKYR": ("decomp", "kyr",),
         "barkThickness": ("barkThickness", "Bark Thickness"),
-        # "browsingProbability": (TK, TK),
-        "estPsiMin": (
-            "estPsiMin",
-            "psiMin",
-        ),  # how is this different from other Psi min?
-        # "estSprouting": (TK, TK),
-        # "sapSproutGrowth": (TK, TK),
-        # "serotinyFormula": (TK, TK),
-        # "serotinyFecundity": (TK, TK),
+        "browsingProbability": None,
+        "estPsiMin": ("estPsiMin", "psiMin",),
+        "estSprouting": None,  # TODO: species specific work needed. @john/matt
+        "sapSproutGrowth": None,
+        "serotinyFormula": None,  # TODO: some of the oaks might hold acorns over winter? Ask John.
+        "serotinyFecundity": None,
     }
 
-    def __init__(self, excel_fname):
-        self._fname = excel_fname
-        self._sheets = {}
+    _EXCEL_PARAM_FNAME = "data/params/iland_america.xlsx"
+    _sheets = {}  # for caching sheets w multiple params.
 
-    def _get_param(self, short_name, k):
-        sheet_name, col_name = self._schema[k]
+    def __init__(self, short_name):
+        self._short_name = short_name
+
+    def _get_param(self, param_key):
+        sheet_name, col_name = self._schema[param_key]
         try:
             sh = self._sheets[sheet_name]
         except KeyError:
             # naively cache -- yay!
-            sh = pd.read_excel(self._fname, sheet_name=sheet_name)
+            sh = pd.read_excel(self._EXCEL_PARAM_FNAME, sheet_name=sheet_name)
             self._sheets[sheet_name] = sh
 
-        return sh.loc[sh.shortName == short_name].iloc[0][col_name]
+        # if col_name is None, then go to _default_params dict
+        if col_name:
+            val = sh.loc[sh.shortName == self._short_name].iloc[0][col_name]
+        else:
+            val = self._default_params.get(k, -999)
+        return val
 
-    def get_species_params(self, short_name):
+    def _species_overrides(self):
+        """
+        After loading from the DB, search for species specific yaml/json(?) files to overwrite
+        Like isConiferous, isEvergreen, active, displayColor, LIPFile
+        estSprouting: 0/1
+        """
         return None
-        # append isConiferous, isEvergreen, active, displayColor, LIPFile
+
+    def get_species_params(self):
+        return None
+
+        # append browsing
+        # append
+        # TODO: check for -999 fill values.
 
 
 def species_params(short_name):
     pass
+
+
+def main():
+    pass
+
+
+if __name__ == "__main__":
+    main()

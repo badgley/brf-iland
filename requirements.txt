@@ -2,5 +2,5 @@ daymetpy
 daymetpy==1.0.0
 pandas==0.25.3
 numpy==1.17.4
-luigi==2.8.13
+luigi==3.6.0
 geohash2==1.1
